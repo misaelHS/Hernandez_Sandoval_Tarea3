@@ -1,310 +1,253 @@
 
-#include "fsl_debug_console.h"
 #include "pin_mux.h"
 #include "clock_config.h"
 #include "board.h"
 #include "fsl_pit.h"
+#include "fsl_debug_console.h"
+#include "fsl_pit.h"
 #include "fsl_clock.h"
 #include "fsl_gpio.h"
 
-/*******************************************************************************
- * Definitions
- ******************************************************************************/
+#include "LEDRGB.h"
 
-#define PIN21 21u	// DEFINICION DEL PIN21, PARA EL LED AZUL
-#define PIN22 22u   // DEFINICION DEL PIN22, PARA EL LED ROJO
-#define PIN26 26u	// DEFINICION DEL PIN26, PARA EL LED VERDE
+#define SW2 6u
+#define SW3 4u
 
-#define PIN06 6u	// DEFINICION DEL SW2
-#define PIN04 4u	// DEFINICION DEL SW3
-
-typedef enum { 	// DEFINICION DE CASOS
-	UNO,
-	DOS,
-	TRES,
-	CUATRO,
-	CINCO,
-}Casos;
-
-volatile uint32_t g_ButtonPress2 = false; // DEFINICION DE VARIABLE PARA EL SW2 PARA LA INTERRUPCION
-volatile uint32_t g_ButtonPress3 = false; // DEFINICION DE VARIABLE PARA EL SW3 PARA LA INTERRUPCION
-volatile bool pitIsrFlag = false; 		  // DEFINICION DE VARIABLE PARA EL PIT
-volatile uint32_t i = false;
-
-
-gpio_pin_config_t sw2_config = {	// CONFIGURACION DEL SW2 COMO ENTRADA
-       kGPIO_DigitalInput,
-       1,
-   };
-
-gpio_pin_config_t sw3_config = {	// CONFIGURACION DEL SW3 COMO ENTRADA
-       kGPIO_DigitalInput,
-       1,
-   };
-
-gpio_pin_config_t led1_config={  // DEFINICION DEL LED 1 COMO SALIDA A TRAVES DEL GPIO
-		kGPIO_DigitalOutput,
-		1,
+gpio_pin_config_t config_input = {
+    kGPIO_DigitalInput,
+    1,
 };
 
-gpio_pin_config_t led2_config={ // DEFINICION DEL LED 2 COMO SALIDA A TRAVES DEL GPIO
-		kGPIO_DigitalOutput,
-		1,
-};
+const port_pin_config_t sw_gpio = {
+    kPORT_PullUp,
+    kPORT_FastSlewRate,
+    kPORT_PassiveFilterDisable,
+    kPORT_OpenDrainDisable,
+    kPORT_LowDriveStrength,
+    kPORT_MuxAsGpio,
+    kPORT_UnlockRegister
+  };
 
-gpio_pin_config_t led3_config={ // DEFINICION DEL LED 3 COMO SALIDA A TRAVES DEL GPIO
-		kGPIO_DigitalOutput,
-		1,
-};
+volatile bool pitIsrFlag = false;
+volatile bool SW2_presionado = false;
+volatile bool SW3_presionado = false;
 
-void PORTC_IRQHandler(void)// CONFIGURACION DE LA INTERRUPCION DEL PUERTO C PIN 6
-{
-    GPIO_PortClearInterruptFlags(GPIOC, 1U << PIN06);
-    g_ButtonPress2 = true;	// HABILITACION DE BANDERA DE INTERRUPCION
-    SDK_ISR_EXIT_BARRIER;
+void PORTA_IRQHandler(void){
+	   GPIO_PortClearInterruptFlags(GPIOA, 1U << SW3);
+	   SW3_presionado = true;
+	   SDK_ISR_EXIT_BARRIER;
 }
 
-void PORTA_IRQHandler(void)// CONFIGURACION DE LA INTERRUPCION DEL PUERTO PIN 4
-{
-    GPIO_PortClearInterruptFlags(GPIOA, 1U << PIN04);
-    g_ButtonPress3 = true; // HABILITACION DE BANDERA DE INTERRUPCION
-    SDK_ISR_EXIT_BARRIER;
+void PORTC_IRQHandler(void){
+	   GPIO_PortClearInterruptFlags(GPIOC, 1U << SW2);
+	   SW2_presionado = true;
+	   SDK_ISR_EXIT_BARRIER;
 }
-
-void PIT0_IRQHandler(void)// CONFIGURACION DE LA INTERRUPCION DEL PIT CANAL 0
+void PIT0_IRQHandler(void)
 {
     PIT_ClearStatusFlags(PIT, kPIT_Chnl_0, kPIT_TimerFlag);
     pitIsrFlag = true;
     __DSB();
 }
 
-int main(void)
-{
+int main(void){
 
-	const port_pin_config_t porta_pin6_config = {
-	    kPORT_PullUp,                   /* Internal pull-up resistor is enabled */
-	    kPORT_FastSlewRate,             /* Fast slew rate is configured */
-	    kPORT_PassiveFilterDisable,     /* Passive filter is disabled, PARA REBOTES DE SW */
-	    kPORT_OpenDrainDisable,         /* Open drain is disabled */
-	    kPORT_LowDriveStrength,         /* High drive strength is configured, 2 - 8 mA SALIDA EN CORRIENTE DE PINES */
-	    kPORT_MuxAsGpio,                /* Pin is configured as PTA4 */
-	    kPORT_UnlockRegister            /* Pin Control Register fields [15:0] are not locked */
-	  };
+	CLOCK_EnableClock(kCLOCK_PortA);
+	CLOCK_EnableClock(kCLOCK_PortC);
 
-	const port_pin_config_t porta_pin4_config = {
-	    kPORT_PullUp,                   /* Internal pull-up resistor is enabled */
-	    kPORT_FastSlewRate,             /* Fast slew rate is configured */
-	    kPORT_PassiveFilterDisable,     /* Passive filter is disabled, PARA REBOTES DE SW */
-	    kPORT_OpenDrainDisable,         /* Open drain is disabled */
-	    kPORT_LowDriveStrength,         /* High drive strength is configured, 2 - 8 mA SALIDA EN CORRIENTE DE PINES */
-	    kPORT_MuxAsGpio,                /* Pin is configured as PTA4 */
-	    kPORT_UnlockRegister            /* Pin Control Register fields [15:0] are not locked */
-	  };
+	LedBegin();
 
-	Casos Estado  = UNO;
+	PORT_SetPinConfig(PORTC, SW2, &sw_gpio);
+	PORT_SetPinConfig(PORTA, SW3, &sw_gpio);
 
-//---------
-	CLOCK_EnableClock(kCLOCK_PortA); // HABILITACION DEL CLOCK DEL PUERTO A, PARA EL USO DE SW1
-	CLOCK_EnableClock(kCLOCK_PortB); // HABILITACION DEL CLOCK DEL PUERTO B, PARA EL USO DE LED AZUL Y LED ROJO
-	CLOCK_EnableClock(kCLOCK_PortC); // HABILITACION DEL CLOCK DEL PUERTO C, PARA EL USO DE SW2
-	CLOCK_EnableClock(kCLOCK_PortE); // HABILITACION DEL CLOCK DEL PUERTO A, PARA EL USO DE LED VERDE
+	PORT_SetPinInterruptConfig(PORTC, SW2, kPORT_InterruptFallingEdge);
+	PORT_SetPinInterruptConfig(PORTA, SW3, kPORT_InterruptFallingEdge);
 
-	PORT_SetPinConfig(PORTC, PIN06, &porta_pin6_config); //
-	PORT_SetPinInterruptConfig(PORTC, PIN06, kPORT_InterruptFallingEdge); //
-	PORT_SetPinConfig(PORTA, PIN04, &porta_pin4_config); //
-	PORT_SetPinInterruptConfig(PORTA, PIN04, kPORT_InterruptFallingEdge); //
+	GPIO_PinInit(GPIOC, SW2, &config_input);
+	GPIO_PinInit(GPIOA, SW3, &config_input);
 
-	PORT_SetPinMux(PORTB, PIN21, kPORT_MuxAsGpio); //CONFIGURACION DEL PIN21 DEL PUERTO B MULTIPLEXADO, PARA USO DEL LED AZUL
-	PORT_SetPinMux(PORTB, PIN22, kPORT_MuxAsGpio); //CONFIGURACION DEL PIN22 DEL PUERTO B MULTIPLEXADO, PARA USO DEL LED ROJO
-	PORT_SetPinMux(PORTE, PIN26, kPORT_MuxAsGpio); //CONFIGURACION DEL PIN26 DEL PUERTO E MULTIPLEXADO, PARA USO DEL LED VERDE
+	pit_config_t pitConfig;
 
-	GPIO_PinInit(GPIOB, PIN21, &led1_config); // CONFIGURACION DEL GPIO DEL PIN21, PUERTO B, COMO SALIDA
-	GPIO_PinInit(GPIOB, PIN22, &led2_config); // CONFIGURACION DEL GPIO DEL PIN22, PUERTO B, COMO SALIDA
-	GPIO_PinInit(GPIOE, PIN26, &led3_config); // CONFIGURACION DEL GPIO DEL PIN26, PUERTO E, COMO SALIDA
-	GPIO_PinInit(GPIOC, PIN06, &sw2_config);  // CONFIGURACION DEL GPIO DEL PIN26, PUERTO E, COMO ENTRADA
-	GPIO_PinInit(GPIOA, PIN04, &sw3_config);  // CONFIGURACION DEL GPIO DEL PIN26, PUERTO E, COMO ENTRADA
-
-	NVIC_EnableIRQ(PORTC_IRQn); 	 // HABILITACION DEL VECTOR DE INTERRUPCION PUERTO C
-	NVIC_SetPriority(PORTC_IRQn, 2); // PRIORIDAD DE LA INTERRUPCION C
-	NVIC_EnableIRQ(PORTA_IRQn); 	 // HABILITACION DEL VECTOR DE INTERRUPCION PUERTO A
-	NVIC_SetPriority(PORTA_IRQn, 1); // PRIORIDAD DE LA INTERRUPCION A
-
-    pit_config_t pitConfig; // VARIABLE DE TIPO PIT_CONFIG
-    uint32_t freq=0;		// VARIABLE PARA ESTABLECER LA FRECUENCIA
-
-/*FUNCIONES ASOCIADAS A LA TARJETA
- *CODIGO INICIAL QUE PERMITE LA MANITPULACION DE LA TARJETA
- *
- *BOARD_INITPINS AGRUPA LOS PINES QUE UTILIZA EL SDK
- *BOARD_BOOTCLOCKRUN MANIPULA EL SISTEMA DE RELOJ DE LA K64F PARA TRABAJAR A 120MHz
- *BOARD_INITDEBUGCONSOLE CONFIGURA LA SALIDA DEL DEBUG QUE SE UTILIZA EN LA K64 (POR DECIR UART)
- */
-    BOARD_InitPins();
+	BOARD_InitPins();
     BOARD_BootClockRUN();
     BOARD_InitDebugConsole();
 
- //  PIT_GetDefaultConfig(&pitConfig); //ESTABLECE CONFIGURACION POR DEFECTO
-
-//INICIALIZACION
     PIT_Init(PIT, &pitConfig);
-
-//EL CLOCKBUS TRABAJA A LA MITAD DEL CORE/2, EN ESTE CASO 120MHz
-    freq = CLOCK_GetFreq(kCLOCK_BusClk);
-
-//SE ESTABLECE EL PERIODO PASANDO COMO ARGUMENTO LA DIRECCION BASE DEL PIT, EL CANAL, UNA MACRO FUNCION
-//LA MACRO TRANSFORMA EL DATO A UN VALOR EN SEGUNDO, ES DECIR, PROPORCIONA EL TIEMPO EN 1 SEGUNDO
-    PIT_SetTimerPeriod(PIT,kPIT_Chnl_0, USEC_TO_COUNT(1000000U, freq));
-
-//HABILITAR INTERRUPCIONES EN EL PERIFERICO
+    PIT_SetTimerPeriod(PIT,kPIT_Chnl_0, USEC_TO_COUNT(1000000U, CLOCK_GetFreq(kCLOCK_BusClk)));
     PIT_EnableInterrupts(PIT, kPIT_Chnl_0 , kPIT_TimerInterruptEnable);
+    EnableIRQ(PIT0_IRQn);
+    PIT_StartTimer(PIT, kPIT_Chnl_0);
 
-//HABILITAR INTERRUPCIONES EN EL NVIC
-    //EnableIRQ(PIT0_IRQn);  //FUNCION QUE HABILITA LA INTERRUPCION SIN PRIORIDAD
-    NVIC_EnableIRQ(PIT0_IRQn); 	//HABILITACION DEL VECTOR DE INTERRUCION PARA EL PIT
-    NVIC_SetPriority(PIT0_IRQn,3);	//ESTABLECE PRIORIDAD DE LE INTERRUPCION DEL PIT
+	NVIC_EnableIRQ(PORTA_IRQn);
+	NVIC_EnableIRQ(PORTC_IRQn);
+	NVIC_EnableIRQ(PIT0_IRQn);
 
-   PIT_StartTimer(PIT, kPIT_Chnl_0); //INICIA LA MARCHA DEL TIMER PIT
+	NVIC_SetPriority(PORTA_IRQn, 2);
+	NVIC_SetPriority(PORTC_IRQn, 2);
+	NVIC_SetPriority(PIT0_IRQn, 2);
 
-    while (true)
-    {
-    	PIT_StartTimer(PIT, kPIT_Chnl_0);
-    	if(g_ButtonPress2){
-    		Estado  = DOS;
-  //  		g_ButtonPress3=false;
+	PIT_StartTimer(PIT, kPIT_Chnl_0);
 
-    	}
-    	if(g_ButtonPress3){
-    		g_ButtonPress2=false;
-    		i=true;
-    		Estado  = TRES;
-    	}
+	typedef enum {UNO, DOS, TRES, CUATRO} estados_externos_t;
+	estados_externos_t estado_externo = UNO;
 
-    	switch (Estado) {
-    					case UNO:
+	typedef enum {Yellow, Red, Purple, Green, Blue, White} estados_internos_t;
+	estados_internos_t estado_interno = yellow;
 
-    						if (true == pitIsrFlag){
-    						     GPIO_PortSet(GPIOB, 1u << PIN21);	// AMARILLO
-    						     GPIO_PortClear(GPIOB, 1u << PIN22);
-    						     GPIO_PortClear(GPIOE, 1u << PIN26);
-    						     pitIsrFlag = false;
-    						    }
+	while(true){
+		switch (estado_externo) {
+		    	case UNO: 	//CASO 1
+		    		switch (estado_interno) {
+		    				case Yellow:
+		    					LedColor(yellow);
+		    					if(pitIsrFlag==true){
+		    						estado_interno = Red;
+		    						pitIsrFlag=false;
+		    					}
+		    					break;
+		    				case Red:
+		    					LedColor(red);
+		    				   	if(pitIsrFlag==true){
+		    				   		estado_interno = Purple;
+		    				   		pitIsrFlag=false;
+		    				   	}
+		    				   	break;
+		    				case Purple:
+		    					LedColor(purple);
+		    					if(pitIsrFlag==true){
+		    						estado_interno = Yellow;
+		    						pitIsrFlag=false;
+		    					}
+		    				break;
+		    				default:
+		    					estado_interno = Yellow;
+		    				break;
 
-    						if (true == pitIsrFlag){
-					            GPIO_PortSet(GPIOE, 1u << PIN26);	// ROJO
-					            GPIO_PortSet(GPIOB, 1u << PIN21);
-					        	GPIO_PortClear(GPIOB, 1u << PIN22);
-					            pitIsrFlag = false;
-   						        }
-    						if (true == pitIsrFlag){
-					        	GPIO_PortClear(GPIOB, 1u << PIN21);// MORADO
-					        	GPIO_PortClear(GPIOB, 1u << PIN22);
-					        	GPIO_PortSet(GPIOE, 1u << PIN26);
-					            pitIsrFlag = false;
-   						        }
+		    		}
+		    	if(SW2_presionado){
+		    		estado_externo = DOS;
+		    		estado_interno = Green;
+		    		SW2_presionado = false;
+		    	}
+		    	if(SW3_presionado){
+		    		SW3_presionado = false;
+		    	}
+		    	break;
 
-    					break;
+		    	case DOS: //CASO 2
+		    		switch (estado_interno) {
+		    		   	case Green:
+		    		   		LedColor(green);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = blue;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+				    	case Blue:
+				    		LedColor(blue);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Red;
+		    					pitIsrFlag=false;
+		    				 }
+		    				 break;
+	  			    	case Red:
+	  			    		LedColor(red);
+		    				 if(pitIsrFlag==true){
+		    					 estado_interno = Green;
+		    					 pitIsrFlag=false;
+		    				 }
+		    			  	 break;
+		    	    	default:
+		    				estado_interno = Green;
+		    				break;
+		    		}
+		    		if(SW2_presionado){
+		    	   		SW2_presionado = false;
+		    		}
+		    		if(SW3_presionado){
+		    			estado_externo = TRES;
+		    			estado_interno = Blue;
+		    			SW3_presionado = false;
+		        	}
+			    	break;
 
-    					case DOS:
-    						g_ButtonPress2=false;
-    						if(true == pitIsrFlag){
-    							GPIO_PortClear(GPIOE, 1u << PIN26); //VERDE
-    							GPIO_PortSet(GPIOB, 1u << PIN21);
-    							GPIO_PortSet(GPIOB, 1u << PIN22);
-    							pitIsrFlag = false;
-				        		}
-
-    						if(true == pitIsrFlag){
-    							GPIO_PortClear(GPIOB, 1u << PIN21);	// AZUL
-    							GPIO_PortSet(GPIOB, 1u << PIN22);
-    							GPIO_PortSet(GPIOE, 1u << PIN26);
-    							pitIsrFlag = false;
-				        		}
-
-    						if(true == pitIsrFlag){
-    							GPIO_PortClear(GPIOB, 1u << PIN22);	// ROJO
-    							GPIO_PortSet(GPIOE, 1u << PIN26);
-    							GPIO_PortSet(GPIOB, 1u << PIN21);
-    							pitIsrFlag = false;
-				        		}
-
-    					break;
-
-    					case TRES:
-    						g_ButtonPress3=false;
-    						if(true == pitIsrFlag){
-    						   	GPIO_PortSet(GPIOE, 1u << PIN26); //AZUL
-    						   	GPIO_PortClear(GPIOB, 1u << PIN21);	//
-    						   	GPIO_PortSet(GPIOB, 1u << PIN22);
-    						   	pitIsrFlag = false;
-    						    }
-
-    						 if(true == pitIsrFlag){
-    						   	GPIO_PortClear(GPIOB, 1u << PIN21);	// BLANCO
-    						   	GPIO_PortClear(GPIOB, 1u << PIN22);
-    						   	GPIO_PortClear(GPIOE, 1u << PIN26);
-    						  	pitIsrFlag = false;
-    						    }
-
-    						 if(true == pitIsrFlag){
-    						   	GPIO_PortClear(GPIOB, 1u << PIN22);	// ROJO
-    						    GPIO_PortSet(GPIOE, 1u << PIN26);
-    						    GPIO_PortSet(GPIOB, 1u << PIN21);
-    						    pitIsrFlag = false;
-    							}
-
-    						 if(g_ButtonPress3 & (i==1)){
-    							 g_ButtonPress3=false;
-    						     	    Estado  = CUATRO;
-    						     	}
-
-    					break;
-    					case CUATRO:
-    						i=false;
-    						g_ButtonPress2=false;
-    						if(true == pitIsrFlag){
-    							GPIO_PortClear(GPIOE, 1u << PIN26);//VERDE
-    							GPIO_PortSet(GPIOB, 1u << PIN21);
-    							GPIO_PortSet(GPIOB, 1u << PIN22);
-    							pitIsrFlag = false;
-    					    	}
-
-    					    if(true == pitIsrFlag){
-    					       	GPIO_PortClear(GPIOB, 1u << PIN21);	// MORADO
-    					       	GPIO_PortClear(GPIOB, 1u << PIN22);
-    					       	GPIO_PortSet(GPIOE, 1u << PIN26);
-    					    	pitIsrFlag = false;
-    					    	}
-
-    					    if(true == pitIsrFlag){
-    					       	GPIO_PortClear(GPIOB, 1u << PIN22);	// AMARILLO
-    					        GPIO_PortClear(GPIOE, 1u << PIN26);
-    					        GPIO_PortSet(GPIOB, 1u << PIN21);
-    					        pitIsrFlag = false;
-    					    	}
-
-    					    if(g_ButtonPress2){
-    					    	Estado  = CINCO;
-	    						}
-    					break;
-    					case CINCO:
-    						g_ButtonPress2=false;
-    						g_ButtonPress3=false;
-    						GPIO_PortSet(GPIOB, 1u << PIN21);//BLUE
-    			    		GPIO_PortSet(GPIOB, 1u << PIN22);//RED
-    			    		GPIO_PortSet(GPIOE, 1u << PIN26);//GREE
-
-    			    		Estado = UNO;
-
-    			    	break;
-
-    					default:
-    						GPIO_PortSet(GPIOB, 1u << PIN21);//BLUE
-    						GPIO_PortSet(GPIOB, 1u << PIN22);//RED
-    						GPIO_PortSet(GPIOE, 1u << PIN26);//GREE
-
-    						Estado = UNO;
-    					break;
-    				}
-    }
-
+		    	case TRES: //CASO 3
+		    		switch (estado_interno) {
+		    			case Blue:
+		    				LedColor(blue);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = White;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    			case White:
+		    				LedColor(white);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Red;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    			case Red:
+		    				LedColor(red);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Green;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    				default:
+		    				estado_interno = Blue;
+		    				break;
+		    			}
+		    			if(SW2_presionado){
+		    				SW2_presionado = false;
+		    			}
+		    			if(SW3_presionado){
+		    				estado_externo = CUATRO;
+		    				estado_interno = Green;
+		    				SW3_presionado = false;
+		    			}
+		    			break;
+		    	case CUATRO: //CASO 4
+		    		switch (estado_interno) {
+		    		   	case Green:
+		    		   		LedColor(green);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Purple;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    			case Purple:
+		    				LedColor(purple);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Yellow;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    			case Yellow:
+		    				LedColor(yellow);
+		    				if(pitIsrFlag==true){
+		    					estado_interno = Green;
+		    					pitIsrFlag=false;
+		    				}
+		    				break;
+		    				default:
+		    					estado_interno = Green;
+		    				break;
+		    			}
+		    			if(SW2_presionado){
+		    				SW2_presionado = false;
+		    				estado_externo = UNO;
+		    				estado_interno = Yellow;
+		    			}
+		    			if(SW3_presionado){
+		    				SW3_presionado = false;
+		    			}
+		    			break;
+		    			default:
+		    			estado_externo = UNO;
+		    			estado_interno = Yellow;
+		    			break;
+		}
+	}
 }
+
